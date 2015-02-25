@@ -1,0 +1,423 @@
+#!/usr/bin/perl
+
+#David Buss 1748752
+#CMPT 220 UNIX & SCRIPTING
+#March 22, 2014
+#Assignment #3
+#This program is designed to take in pdf files of tickets and extract all the
+#necessary data from the files.
+
+#This is a table showing the order of the fields that are to be recorded in 
+#the CSV file once the program has run.
+
+#FIELDS
+# TicketNum,LPprovince,LPNum,OffendersName,Address,AddressCity,PostalCode,
+# DateOfOffence,TimeOfOffence,SpeedLimit,RecordedSpeed,
+# Location,SiteNum,Penalty,CourtDate,OfficerName,BadgeNum,Agency,
+# OperatorNum(Only added if it is a photo radar or LIDAR),TicketType,SpeedDifference
+#These fields may be used to index into the array that is made 
+#using getInformation
+
+use strict;
+use warnings;
+
+use Tk;
+use Getopt::Std;
+
+my %months = qw( Jan 01 Feb 02 Mar 03 Apr 04 May 05 Jun 06 Jul 07 
+                 Aug 08 Sep 09 Oct 10 Nov 11 Dec 12);
+my @headers = qw/ TicketNum LPprovince LPNum OffendersName Address AddressCity PostalCode DateOfOffence
+ TimeOfOffence SpeedLimit RecordedSpeed Location SiteNum Penalty CourtDate OfficerName BadgeNum Agency
+ OperatorNum TicketType SpeedDifference /;
+
+#List of the items that are listed when verbose option is selected.
+my $numberOfTickets;
+my $numberOfFiles;
+
+
+#Description: Prints out the usage of the program
+#Syntax: printUsage
+#ReturnValue: prints usage to standard output
+sub printUsage {
+    print <<EOF;
+usage: ots_tickets [OPTIONS...] (fields|court|summary) FILE...
+              OPTION
+                h -> display usage
+                v ->print extra info to standard error
+                o file -> save output to file
+EOF
+}
+
+#Description: takes in all the tickets and returns them as an array, with each
+# element being a single ticket
+#Syntax: formatTickets file
+#Parameters: file - the file that you wish to extract the tickets from
+#ReturnValue: returns an array of all the tickets(one ticket per element).
+sub formatTickets(@) {
+    my @tickets = @_;
+    my @allTickets;
+    $numberOfFiles = @tickets;
+    foreach my $tix (@tickets) {
+	open my $f, "$tix" or die $!;
+	my @openFile = <$f>;
+	my $allText = join '', @openFile;
+	my @allTix = split "\f", $allText;
+	while (@allTix > 1) {
+	    my @bothPages = (shift @allTix, shift @allTix);
+	    my $finalTix = join '',@bothPages;
+	    push @allTickets, $finalTix;
+	}
+    }
+    $numberOfTickets = @allTickets;
+    return @allTickets;
+}
+
+#Description: pulls the format that the user has selected off of the arguments
+# and returns it
+#Syntax: getOutput
+#Return Value: the first argument in the list, the format that the
+# user has selected
+sub getOutput {
+    my $output = shift @ARGV;
+    return $output;
+}
+
+#Description: Pulls all required information and puts it into an
+#   array of hashes. One element per ticket.
+#Syntax: getInformation array
+#Parameters: array - the array holding all the tickets to be analyzed
+#ReturnValue:an array of hashes containing all required information
+sub getInformation(@) {
+    my @tickets = @_;
+    my @information; 
+    foreach my $ticket (@tickets) {
+	my %ticketHash;
+	#finds the ticket number
+	if ($ticket =~ /(\w\d{8}\w)/) {  
+	    $ticketHash{"TicketNum"} = $1;
+	}
+	#finds the province that the licence plate is from
+	if ($ticket =~ /bearing (\w{2}) licence/) { 
+	    $ticketHash{"LPprovince"} = $1;
+	}
+	 #finds the licence plate of the offender
+	if ($ticket =~ /LICENCE #: ([\w?\d?\s?]{1,8})/) { 
+	    $ticketHash{"LPNum"} = $1;
+	}
+	#finds the name of the person that the ticket was issued to
+	if ($ticket =~ /NAME: (\w+[[:punct:]]?\w+), (\w+ \w)/) {   
+	    $ticketHash{"OffendersName"} = "$2 $1";
+	}
+	#finds the address of the offender
+	if ($ticket =~ /ADDRESS\s{5}([\w\d]*)\s*\n?\s*(.+\w{2})\n\s+(.+), \w{2} (.{3} .{3})\n/) {  
+	    $ticketHash{"Address"} = "$1 $2";
+	    $ticketHash{"AddressCity"} = $3;
+	    $ticketHash{"PostalCode"} = $4;
+	}
+	#finds the date the ticket was issued $1 is day $2 is month $3 is year
+	if ($ticket =~ /(\d{2}) (\w{3}) (\d{4})/) { 
+	    $ticketHash{"DateOfOffence"} = "$3-$months{$2}-$1";
+	}
+        #finds the time of the offence    
+	if ($ticket =~ /(\d{2}:\d{2}:\d{2})/) { 
+	    $ticketHash{"TimeOfOffence"} = $1;
+	}
+	#finds the speed limit of the road
+	if ($ticket=~ /SPEED LIMIT: (\d+)/) {    
+	    $ticketHash{"SpeedLimit"} = $1;
+	}
+	#finds the speed the offender was travelling          
+	if ($ticket =~ /RECORDED SPEED: (\d+)/) {  
+	    $ticketHash{"RecordedSpeed"} = $1;
+	}
+	#finds where the photo was taken
+	if ($ticket =~ /LOCATION: \(Site (\w+\d+)\) (.+\s[[:upper:]]{2})\s/) {
+	    $ticketHash{"Location"} = $2;
+	    $ticketHash{"SiteNum"} = $1;
+	}
+	#finds the location of the speed trap if it is type 1 or 3 
+	if ($ticket =~ /LOCATION: \(Site (\d+)\) /) {   
+	    $ticketHash{"SiteNum"} = $1;
+	}
+	#finds the value of the fine 
+	if ($ticket =~ /PENALTY: (\$\d+\.\d{2})/) { 
+	    $ticketHash{"Penalty"} = $1;
+	}
+	#finds the court date $1 is the day $2 is the month $3 is the year
+	if ($ticket =~ /COURT DATE: (\d{2}) (\w{3}) (\d{4})/) {
+	    $ticketHash{"CourtDate"} = "$3-$months{$2}-$1";
+	}
+	#finds the issuing officers name, badge number and agency 
+	if ($ticket =~/([[:upper:]]\w+ [[:upper:]]\w+[[:punct:]]?\w+)\s+(\w{0,4}\d{3,8})\s+(\w+)/) {
+	    $ticketHash{"OfficerName"} = $1;
+	    $ticketHash{"BadgeNum"} = $2;
+	    $ticketHash{"Agency"} = $3;
+	}
+	#finds the operator number for the camera used
+	if ($ticket =~/OPERATOR #: (\d+)/) {    
+	    $ticketHash{"OperatorNum"} = $1;
+	}
+	#determines if the ticket is photo radar
+	if ($ticket =~/ Photo LIDAR /) {
+	    $ticketHash{"TicketType"} = "Photo LIDAR";
+	}
+	#determines of the ticket is from an intersection safety device
+	if ($ticket =~/Intersection\sSafety\sDevice/) {
+	    $ticketHash{"TicketType"} = "Intersection Safety Device";
+	}
+	#determines if the ticket is photo radar
+	if ($ticket =~/Photo Radar /) {
+	    $ticketHash{"TicketType"} = "Photo Radar";
+	}
+	#calculates the recorded speed difference of the ticket 
+	$ticketHash{"SpeedDifference"} = $ticketHash{"RecordedSpeed"} - $ticketHash{"SpeedLimit"};
+	my $hash = \%ticketHash;
+	push @information, $hash;
+    }
+    return @information;
+}
+
+#Description: Prints out all fields that were collected from the tickets
+#Syntax: printFields array
+#Parameters: array - the array that holds all the hashes of ticket information
+sub printFields(@) {
+    my @files = @_;
+    my @tickets = formatTickets @files;
+    my @info = getInformation @tickets;
+    #prints out headers
+    if (scalar @files != 0) {
+	foreach my $key (@headers) {
+	    print "$key,";
+	} 
+    }
+    print "\n";
+    foreach my $ticket (@info) {
+	foreach my $key (@headers) {
+	    if (defined $ticket->{$key}) {
+		print "$ticket->{$key},";
+	    } else {
+		print "N/A,";
+	    }
+	}
+	print "\n";
+    }
+}
+
+#Description: Prints out the court dates that appear as well as how
+#  many tickets are currently assigned to that date.
+#Syntax: printCourt array
+#Parameters: array - the array that holds all the hashes of ticket information
+sub printCourt(@) {
+    my @files = @_;
+    my @tickets = formatTickets @files;
+    my @info = getInformation @tickets;
+    my %courtDates;
+    my @unsorted;
+    foreach my $ticket (@info) {
+	my $date = $ticket->{"CourtDate"};
+	if (exists $courtDates{$date}) { 
+	    $courtDates{$date} ++;
+	} else {
+	    $courtDates{$date} = 1;
+	}
+    }
+    print "CourtDate,Number_Of_Tickets\n" if (scalar @files != 0);
+    foreach my $date (keys %courtDates) {
+	push @unsorted, [ $date,$courtDates{$date} ];
+    }
+
+    #Sorts the court dates 
+    my @sorted = sort { $a->[0] cmp $b->[0] } @unsorted;
+    foreach my $line (@sorted) {
+	print "${$line}[0],${$line}[1]\n";
+    }
+}
+
+#Description: Prints out a per-file summary showing the file name,
+#   the first and last courtdate in it as well as the highest and
+#   lowest speed difference recorded
+#Syntax: printSummary array
+#Parameters: array - an array containing all the files that are to be processed
+sub printSummary(@) { 
+    my @tickets = @_;
+    my @final;
+    my @fileNames;
+    foreach my $file (@tickets) {
+	my @null;
+	push @null, $file;
+	my @file = formatTickets @null;
+	my @info = getInformation @file;
+	my $newFile = \@info;
+	push @final, $newFile;
+	push @fileNames, $file;
+    }
+    
+    print "name_of_file,first_court_date,last_court_date,lowest_speed,highest_speed\n"
+	if (scalar @tickets != 0);
+    my $counter = 0;
+    foreach my $file_ref (@final) {
+	my @courtDates;
+	my @speeds;
+	foreach my $ticket_ref (@{$file_ref}) {
+	    push @courtDates, ${$ticket_ref}{"CourtDate"};
+	    push @speeds, ${$ticket_ref}{"SpeedDifference"};
+	}
+	my @sorted_courtDates = sort @courtDates;
+	my @sorted_speeds = sort @speeds;
+	my $firstCourtDate = $sorted_courtDates[0];
+	my $lastCourtDate = $sorted_courtDates[(scalar @sorted_courtDates) - 1];
+	my $highestSpeed = $sorted_speeds[(scalar @sorted_speeds) - 1];
+	my $lowestSpeed = $sorted_speeds[0];
+	print "$fileNames[$counter],$firstCourtDate,$lastCourtDate,$lowestSpeed,$highestSpeed\n";
+	$counter++;
+    }
+    
+}
+
+#exits the program if the user inputs an invalid option
+my %opts;
+printUsage && exit (1) if !(getopts("hvo:", \%opts));
+
+
+#Description: Creates a GUI of the program
+#Syntax: create_gui()
+sub create_gui {
+    my $mw = MainWindow->new();
+    $mw->title("Ots Tickets");
+
+    #creates radio buttons to select which output the user wants
+    my $options = $mw->Frame()->grid(-row => 4, -column => 0);
+    $options->Label(-text => "Select an option")->
+       pack(-side => "left");
+    my @opts = qw/ fields court summary/;
+    my $function = $opts[0];
+    foreach my $label (@opts) {
+	$options->Radiobutton(-text => $label, -value => $label,
+			  -variable => \$function)->pack(-side => "left");
+    }
+    my $saveFile;
+    my $openFiles;
+    
+    #Creates windows to display what the user is selecting
+    my $files = $mw->Text(-width => 50, -height => 4)->
+	grid(-row => 1, -column => 0, -sticky => "news" );
+    tie my $fileNames, $files, 10;
+    $mw->Entry(-width => 50, -textvariable => \$saveFile)->
+	grid(-row => 6, -column => 0);
+    my $statusLog = $mw->Text(-width => 20, -height => 4 )->
+	grid(-row => 10, -column => 0, -sticky => "nesw");
+    tie *STDOUT, ref $statusLog, $statusLog;
+    my $errorLog = $mw->Text(-width => 20, -height => 4 )->
+	grid(-row => 12, -column => 0, -sticky => "nesw");
+    tie *STDERR, ref $errorLog, $errorLog;
+
+    #labels the logs on the bottom half of the screen
+    $mw->Label(-text => "Status Log")->grid(-row => 9, -column =>0, -sticky => "w");
+    $mw->Label(-text => "Error Log")->grid(-row => 11, -column => 0, -sticky => "w");
+
+    #Creates buttons for the user to select input and output files
+    $mw->Button(-text => "Select file(s) to process", -command => sub { $openFiles = openFiles($mw); $fileNames = "$_\n" foreach (@{$openFiles}) })
+	->grid(-row => 0, -column => 0, -sticky => "nesw");
+    $mw->Button(-text => "Select file to save to", -command => sub { $saveFile = saveFile($mw); })
+	->grid(-row => 5, -sticky => "nesw");
+    $mw->Button(-text => "          Extract data          ", -command => sub { runCommands($function,$saveFile,$openFiles); })
+	->grid(-row => 8, -column => 0, -sticky => "w");
+    $mw->Button(-text => "Extract data with verbose info", -command => sub { runCommands($function,$saveFile,$openFiles);
+									     printVerbose(); })
+	->grid(-row => 8, -column => 0, -sticky => "e");
+    MainLoop();
+}
+
+#Description: Used in the GUI to run the commands
+#Syntax: run output
+#Parameters: output - the output type the user has selected 
+sub runCommands($$$) {
+    my ($option, $saveFile,  $files) = @_;
+    open (my $outputFile, '>>', $saveFile) or die $! if defined $saveFile;
+    select $outputFile if defined $saveFile;
+    if ($option eq "fields") {
+	printFields @{$files};
+	select STDOUT;
+	print "Data extracted" if (scalar @{$files} != 0);
+    }
+    elsif ($option eq "court") {
+	printCourt @{$files};
+	select STDOUT;
+	print "Data extracted" if (scalar @{$files} != 0);
+    }
+    else {
+	printSummary @{$files};
+	select STDOUT;
+	print "Data extracted" if (scalar @{$files} != 0);
+    }
+}
+
+
+#Description: Used in the GUI to allow the user to select a file to save to
+#Syntax: saveFile window
+#Parameters: window - the window that the option occurs in
+sub saveFile($) {
+    my ($mw) = @_;
+    my $file = $mw->getSaveFile();
+    return $file;
+}
+
+#Description: Used in the GUI to allow the user to select files to process
+#Syntax: openFiles window
+#Parameters: window - the window that the option occurs in
+sub openFiles($) {
+    my ($mw) = @_;
+    my $fileTypes = [
+	['All files','*'],
+	['text files',['*.txt']],
+	];
+    my $files = $mw->getOpenFile(-filetypes => $fileTypes, -multiple => 1);
+    return $files;
+}
+
+#Description: Prints out extra information if verbose option is selected
+#Syntax: printVerbose
+sub printVerbose {
+    select STDERR;
+    print <<EOF;
+number of tickets --> $numberOfTickets
+number of files processed --> $numberOfFiles
+EOF
+
+    print "written to --> $opts{o}\n" if defined $opts{o};
+}
+
+
+
+#Description: Runs the full program allowing the user to select
+#             what format they want as well as what files to input
+#Syntax: main
+sub main {
+    printUsage && exit (0) if defined $opts{h};
+    my $output = getOutput;
+    open (my $outputFile, '>>', "$opts{o}") or die $! if defined $opts{o};
+    select $outputFile if defined $opts{o};
+    if ($output eq "fields") {
+	printFields @ARGV;
+	printVerbose if defined $opts{v};
+    } 
+    elsif ($output eq "court") {
+	printCourt @ARGV;
+	printVerbose if defined $opts{v};
+    } 
+    elsif ($output eq "summary") {
+	printSummary @ARGV;
+	printVerbose if defined $opts{v};
+    }
+    elsif ($output eq "gui") {
+	create_gui ;
+    }
+    else {
+	select STDOUT;
+	printUsage;
+    }
+    
+}
+main;
+exit (0);
+
